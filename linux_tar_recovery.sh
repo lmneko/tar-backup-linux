@@ -13,9 +13,13 @@ SWAP_SIZE=8000
 #fi
 read -p "Select a empty disk to recovery. example : \" /dev/sda \" : " sel_disk
 
-if [ ! -b ${sel_disk} ] ; then
+if [ -b ${sel_disk} ] ; then
+	sfdisk -d ${sel_disk} > seldisk_partion_table.bak && \
+	echo " \"$sel_disk\"\'s partion table has been backed up to the file seldisk_partion_table.bak"     #backup partion table
+else
         echo "The selected disk is not exist. " ; exit 1
-fi     
+fi
+
 ROOT_START=$((${BOOT_SIZE}+${SWAP_SIZE}+2))
 parted ${sel_disk} -s -a optimal mklabel msdos \
 mkpart primary  2 $(($BOOT_SIZE+2)) \
@@ -26,9 +30,17 @@ if [ $? == 0 ]; then
         partprobe 
         echo "Making disk \"${sel_disk}\" partition is successful"
         parted -s ${sel_disk} p | tail -n 5 | grep -v "^$" 
-        else
-        echo "parted disk ${sel_disk} error and exit..." ; exit 1
+else
+        read -p "parted disk ${sel_disk} error. Whether to restore the partition table ? [yes/no]:" rectable_confirm
+	if [ ${rectable_confirm} == '[Yy][Ee][Ss]' ] || [ ${rectable_confirm} == '[Yy]' ]; then
+		sfdisk ${sel_disk} < seldisk_partion_table.bak
+		exit 
+	else
+		exit
+	fi
 fi
+
+
 #When using the BIOS boot, install grub2 on the GPT partition table
 ###################################################################
 #ROOT_START=$(($BOOT_SIZE+$SWAP_SIZE+4))
