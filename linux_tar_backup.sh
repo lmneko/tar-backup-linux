@@ -16,10 +16,6 @@ extend_opt=' '
 echo "It is best to use this script in the LiveCD system."
 echo "And it is only to use in msdos part table."
 sleep 2s
-function usage {
-        echo "tar_backup -s [source back disk] -d [backup file]  -n [back file name]   [tar --exclude options]"
-}
-
 function check_part {
 if [ -z $sel_disk ];then         
         read -p "Please input the part of linux system. example : \"/dev/sda\" : " sel_disk
@@ -44,6 +40,8 @@ else   if [  ! -d $dir_bak ] ; then
         return
 fi
 }
+ check_part
+ check_bakdir
 
 function mount_disk {
     mount ${sel_disk} ${MNT_DIR:='/mnt'} && mount ${sel_disk}1 ${MNT_DIR}/boot  \
@@ -51,7 +49,6 @@ function mount_disk {
     return
 }
 
-function tar_restore_file {
     echo "Backup .Please wait..."
     sleep 2s
     tar --xattrs -cvpzf ${dir_bak}/backup_${DATE}.tar.gz \
@@ -64,11 +61,7 @@ function tar_restore_file {
     ${MNT_DIR}
     echo "Backup successful!"
     return
- } 
- check_part
- check_bakdir
- mount_disk
- tar_restore_file
+
  echo "Generating MD5 into backup_${DATE}.MD5"
 md5sum >> backup_${DATE}.MD5
 END_TIME=`date '+%Y-%m-%d %H:%M:%S'`
