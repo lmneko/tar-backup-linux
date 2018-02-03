@@ -56,13 +56,26 @@ check_part
         mkswap ${sel_disk}2 && swapon ${sel_disk}2
 
 function check_bakfile  {
-if [ -z $backup_file ];then         
+if [ -z $backup_file ];then    
        read -p "select the backup file. exapmle: *backup_2018_1_30.tar.gz : " backup_file
-        check_bakfile
+       check_bakfile
 else  if [ ! -f $backup_file ];then
-                 read -p "backup file is not exist. :"  backup_file
-                 check_bakfile
+                        read -p "backup file is not exist. :"  backup_file
+                        check_bakfile
         fi
+        read -p "${backup_file##*/} has been selected. Weather verify MD5? [Y/N]" chk_md5
+        if [ ${chk_md5} == '[Yy]' ]  &&  [ -f ./backup.MD5 ];then
+                md5=`md5sum ${backup_file}`
+                md5bak=`cat backup.MD5`
+                if [ ${md5%% *} == ${md5bak%% *} ];then
+                    echo "check successful!"                  
+                else
+                    echo "check ${md5line##* } error!"
+                    sleep 2s
+                fi
+         else 
+               echo "MD5 file is not exist."
+        fi          
         return  
 fi
 }

@@ -54,7 +54,7 @@ function mount_disk {
 function tar_restore_file {
     echo "Backup .Please wait..."
     sleep 2s
-    tar --xattrs -cvpzf ${dir_bak}/system_backup_${lvm_hd}_${DATE}.tar.gz \
+    tar --xattrs -cvpzf ${dir_bak}/backup_${DATE}.tar.gz \
     --exclude=${MNT_DIR}/proc \
     --exclude=${MNT_DIR}/lost+found \
     --exclude=${MNT_DIR}/mnt \
@@ -68,7 +68,9 @@ function tar_restore_file {
  check_part
  check_bakdir
  mount_disk
- tar_restore_file  
+ tar_restore_file
+ echo "Generating MD5 into backup_${DATE}.MD5"
+md5sum >> backup_${DATE}.MD5
 END_TIME=`date '+%Y-%m-%d %H:%M:%S'`
 echo "Start time : ${START_TIME}"
 echo "Complete time : ${END_TIME}"
