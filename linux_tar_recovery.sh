@@ -1,4 +1,4 @@
-#!/bin/bash
+﻿#!/bin/bash
 #2018-01-29 
 PATH=/bin:/sbin:/usr/bin:/usr/sbin
 export PATH 
