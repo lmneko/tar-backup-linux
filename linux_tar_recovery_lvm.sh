@@ -1,115 +1,197 @@
 ﻿#!/bin/bash
-#2018-02-02 
+#2018-02-02
 PATH=/bin:/sbin:/usr/bin:/usr/sbin
-export PATH 
-START_TIME=`date '+%Y-%m-%d %H:%M:%S'`
-BOOT_SIZE=1000                #size MB
-SWAP_SIZE=8000
-boot_bios_efi='bios'
-boot_lvm_disk='disk'
-OS_DTB='centos'
-ROOT_START=$((${BOOT_SIZE}+${SWAP_SIZE}+2))                
-# Check that we are root
-(( EUID != 0 )) && exec sudo -- "$0" "$@"
+export PATH sel_disk START_TIME
+START_TIME=`date "+%Y-%m-%d %H:%M:%S"`
+BOOT_SIZE=1000
+SWAP_SIZE=8000   #size MB
+boot_biosefi=bios
+boot_lvmdisk=lvm
+ROOT_START=$((${BOOT_SIZE}+${SWAP_SIZE}+2))
+((EUID!=0)) && exec sudo -- "$0" "$@"
 
-echo "Only for restore the systems  that installed on lvm"
-sleep 2s
+echo "Please run this scropt in LiveCD system"
+echo "Only for restore the systems that installed on lvm"
+sleep 1
 
-sfdisk -d ${sel_disk} > ${sel_disk##*/}_partion_table.bak && \
-echo "Partion table has been backed up to the file ${sel_disk##*/}_partion_table.bak"     #backup partion table
-function check_part  {
-if [ -z $sel_disk ];then         
-       read -p "Select a empty disk to recovery. example : \" /dev/sda \" : " sel_disk
-        check_part
-else  if [ ! -b $sel_disk ];then
-                 read -p "The selected disk is invalid. :"  sel_disk
-                 check_part
-        fi
-	    return
-fi
+function check_part {
+	if [ -z $sel_disk ];then
+		read -p "Select a empty disk to recovery. :" sel_disk
+		check_part
+	else if [ ! -b $sel_disk ];then
+			read -p "The selected disk is invalid. :" sel_disk
+			check_part
+		fi
+	fi
 }
-check_part
 
-parted ${sel_disk} -s -a optimal mklabel msdos \
-mkpart primary  2 $(($BOOT_SIZE+2)) \
-mkpart primary $(($BOOT_SIZE+2))  100% \
-toggle 1 boot 
-if [ $? == 0 ]; then
-        partprobe 
-        echo "Making disk \"${sel_disk}\" partition is successful"
-        parted -s ${sel_disk} p | tail -n 5 | grep -v "^$" 
-else
-        echo "parted disk ${sel_disk} error.  Restore the partition table ." 
-		sfdisk ${sel_disk} < seldisk_partion_table.bak
-fi
+function chk_bakfile {
+	if [ -z ${backup_file} ];then
+		read -p "Select the *.tar.bz2 backup file to restore: " backup_file
+		chk_bakfile
+	else if [ ! -f ${backup_file} ];then
+			read -p  "backup file is not exist:" backup_file
+			chk_bakfile
+		 fi
+		 cd ${backup_file%/*} 2>>/dev/null
+		 read -p "${backup_file##*/} has been selected. Weather verify MD5? [y/n]" response
+		 if [[ "${response}" =~ ^(yes|y)$ ]];then
+			if [ -f ./OS_backup*.MD5 ];then
+				bkf_md5=`md5sum ${backup_file} | cut -d " " -f1`
+				md5_bakfile=`cat OS_backup*.MD5 | cut -d " " -f1`
+				[ "$bkf_md5" == "$md5_bakfile" ] && echo "MD5 check successful!" \
+				|| echo "MD5 check fail! and exit..." 
+			else 
+				echo "MD5 file is not exist. "
+				exit 1
+			fi
+		 fi
+	fi
+}
 
+function chk_lvmdisk {
+	if [[ $boot_lvmdisk =~ ^(lvm|disk)$ ]];then
+		return
+	else 
+		exit 1
+}
+
+function mk_part {
+    check_part
+	sfdisk -d ${sel_disk} > ${sel_disk##*/}_partion_table.bak && \
+	echo "Partion table has been backed up to the file ${sel_disk##*/}_partion_table.bak" #bckup partion table
+	mkpart primary  2 $(($BOOT_SIZE+2)) \
+    mkpart primary $(($BOOT_SIZE+2))  ${ROOT_START}  \
+    mkpart primary ${ROOT_START} 100% \
+    toggle 1 boot
+	if [ $? == 0 ];then
+		partprobe
+		echo "Making disk \"${sel_disk}\" partion is successful"
+		parted -s ${sel_disk} p | tail -n 5 | grep -v "^$"
+	else 
+		echo "Partion disk ${sel_disk} error. Restore the partion table..."
+		sfdisk ${sel_disk} < ${sel_disk##*/}_partion_table.bak
+		exit 1
+	fi
+}
+
+function mkfs_mount {
+	mk_part 
+	mkfs.ext4 ${sel_disk}3 && mount ${sel_disk}3 /mnt || exit 1	
+    mkfs.ext4 ${sel_disk}1 && mount ${sel_disk}1 /mnt/boot || exit 1
+    mkswap ${sel_disk}2 && swapon ${sel_disk}2 || exit 1
+}
+
+function mkpart_lvm {
+	check_part
+	sfdisk -d ${sel_disk} > ${sel_disk##*/}_partion_table.bak && \
+	echo "Partion table has been backed up to the file ${sel_disk##*/}_partion_table.bak" #bckup partion table
+	parted ${sel_disk} -s -a optimal mklabel msdos \
+	mkpart primary 2 $(($BOOT_SIZE+2)) \
+	mkpart primary $((BOOT_SIZE+2)) 100% \
+	toggle 1 boot \
+	toggle 2 lvm
+	if [ $? == 0 ];then
+		partprobe
+		echo "Making disk \"${sel_disk}\" partion is successful"
+		parted -s ${sel_disk} p | tail -n 5 | grep -v "^$"
+		sleep 1
+	else 
+		echo "Partion disk ${sel_disk} error. Restore the partion table..."
+		sfdisk ${sel_disk} < ${sel_disk##*/}_partion_table.bak
+		exit 1
+	fi
+}
 
 #When using the BIOS boot, install grub2 on the GPT partition table
 ###################################################################
-#ROOT_START=$(($BOOT_SIZE+$SWAP_SIZE+4))
-#parted ${sel_disk} -s -a optimal mklabel gpt \
-#mkpart primary  2 4 \
-#mkpart primary  4 $(($BOOT_SIZE+4)) \
-#mkpart primary $(($BOOT_SIZE+4)) 100%  \
-#set 1 bios_grub on \
-#toggle 2 boot \
-#|| echo "parted disk ${sel_disk} error and exit..." ; exit 1
+# function mkgpt_in_biosmod {
+	# ROOT_START=$(($BOOT_SIZE+$SWAP_SIZE+4))
+	# parted ${sel_disk} -s -a optimal mklabel gpt \
+	# mkpart primary  2 4 \
+	# mkpart primary  4 $(($BOOT_SIZE+4)) \
+	# mkpart primary $(($BOOT_SIZE+4)) 100%  \
+	# set 1 bios_grub on \
+	# toggle 2 boot \
+	# ||  exit 1
+# }
 
-echo "Create lvm part..."
-pvcreate ${sel_disk}2
-vgcreate centos ${sel_disk}2
-lvcreate -L ${SWAP_SIZE} -n /dev/centos/swap
-lvcreate -L 100%FREE -n /dev/centos/root
-mkfs.ext4  /dev/centos/root && mount /dev/centos/root /mnt/
-mkfs.ext4 ${sel_disk}1 && mount ${sel_disk}1 /mnt/boot
-mkswap /dev/centos/swap && swapon /dev/centos/swap
-
-function check_bakfile  {
-if [ -z $backup_file ];then         
-       read -p "select the backup file. exapmle: *backup_2018_1_30.tar.gz : " backup_file
-        check_bakfile
-else  if [ ! -f $backup_file ];then
-                 read -p "backup file is not exist. :"  backup_file
-                 check_bakfile
-        fi
-        return  
-fi
+function cre_lvmp {
+	mkpart_lvm
+	echo "Create lvm part..."
+	sleep 1
+	pvcreate ${sel_disk}2
+	vgcreate centos ${sel_disk}2
+	lvcreate -L ${SWAP_SIZE}m -n /dev/centos/swap
+	lvcreate -L 100%FREE -n /dev/centos/root
+	mkfs.xfs /dev/centos/root && mount /dev/centos/root /mnt/ || exit 1
+	mkfs.xfs ${sel_disk}1 && mount ${sel_disk}1 /mnt/boot || exit 1
+	mkswap /dev/centos/swap && swapon /dev/centos/swap || exit 1
 }
-check_bakfile
 
-read -p "select the backup file. exapmle: *backup_2018_1_30.tar.gz : " backup_file
-if [ ! -f $backup_file ] ; then
-        echo "backup file is not exist,exiting..." 
-        exit 1
-fi  
+function tar_res {
+    chk_bakfile
+	chk_lvmdisk
+	if [[ $boot_lvmdisk -eq "lvm" ]];then
+		cre_lvmp
+	else 
+		if [[ $boot_lvmdisk -eq "disk" ]];then
+			mkfs_mount
+		fi
+	fi
+	echo "Restore files from the backup file. Please wait..."
+	tar --xattrs -xpf $backup_file -C /mnt \
+	&& echo "Restore completed." \
+	|| exit 1;echo "Restore failed amd exit..."
+}
 
-echo "Restore files from the backup file and install boot loader . Please wait..."
-tar --xattrs -xpf $backup_file -C /mnt 
-echo "Restore completed."
-mkdir -p /mnt/{dev,proc,sys}
-mount -o bind /dev /mnt/dev
-mount -o bind /sys /mnt/sys
-mount -o bind /proc /mnt/proc
-export sel_disk
-chroot /mnt
-grub2-install --target=i386-pc --recheck --boot-directory=/boot ${sel_disk} && \
-grub2-mkconfig -o /boot/grub2/grub.cfg
+function insgrub_genfstab {
+	echo "Install grub2 and gen \"/etc/fstab\"..."
+	sleep 1
+	mkdir -p /mnt/{dev,proc,sys}
+	mount -o bind /dev /mnt/dev
+	mount -o bind /sys /mnt/sys
+	mount -o bind /proc /mnt/proc
+	chroot /mnt
+	grub2-install --target=i386-pc --recheck --boot-dirctory=/boot ${sel_disk} && \
+	grub2-mkconfig -o /boot/grub2/grub.cfg || exit 1
+	mv /etc/fstab /etc/fstab.bak
+	chk_lvmdisk
+	boot_uuid=`blkid | grep ${sel_disk}1 | cut -d\" -f2` || exit 1
+	boot_fstype=`blkid | grep ${sel_disk}1 | cut -d\" -f4` 
+	if [[ $boot_lvmdisk -eq "lvm" ]];then		
+		root_uuid=`blkid | grep "/dev/mapper/centos-root" | cut -d\" -f2`
+		root_fstype=`blkid | grep "/dev/mapper/centos-root" | cut -d\" -f4`
+		swap_uuid=`blkid | grep "/dev/mapper/centos-swap" | cut -d\"`					
+		echo "Update \"/etc/fstab\"..."
+		echo "UUID=$boot_uuid    /boot    $boot_fstype    defaults    0 0" >> /etc/fstab
+		echo "#/dev/mapper/centos-root" >> /etc/fstab
+		echo "UUID=$root_uuid    /    $root_fstype    defaults    0 0" >> /etc/fstab
+		echo "#/dev/mapper/centos-swap" >> /etc/fstab
+		echo "UUID=$swap_uuid    swap    swap    defaults    0 0" >> /etc/fstab
+	else
+		if [[ $boot_lvmdisk -eq "disk" ]];then
+			root_uuid=`blkid | grep ${sel_disk}3 | cut -d\" -f2`
+			root_fstype=`blkid | grep ${sel_disk}3 | cut -d\" -f4`
+			swap_uuid=`blkid | grep ${sel_disk}2 | cut -d\"`
+			echo "Update \"/etc/fstab\"..."
+			echo "UUID=$boot_uuid    /boot    $boot_fstype    defaults    0 0" >> /etc/fstab
+			echo "#${sel_disk}3" >> /etc/fstab
+			echo "UUID=$root_uuid    /    $root_fstype    defaults    0 0" >> /etc/fstab
+			echo "#${sel_disk}2" >> /etc/fstab
+			echo "UUID=$swap_uuid    swap    swap    defaults    0 0" >> /etc/fstab
+		fi
+	fi
+	mount -a && echo " Recovery system successful,check file \"/mnt/etc/fstab\" and reboot"	\
+    || exit 1
+	exit
+}
 
-boot_uuid=`blkid | grep ${sel_disk}1 | cut -d \" -f2`
-boot_fstype=`blkid | grep ${sel_disk}1 | cut -d \" -f4`
-root_uuid=`blkid | grep "/dev/mapper/centos-root" | cut -d \" -f2`
-root_fstype=`blkid | grep "/dev/mapper/centos-root"  | cut -d \" -f4`
-#swap_uuid=`blkid | grep ${sel_disk}2 | cut -d \" -f2`
-#swap_fstype=swap
-mv /etc/fstab /etc/fstab.bak
-echo "update \"/etc/fstab\"..."
-echo "UUID=$boot_uuid    /boot        $boot_fstype    defaults    0 0" >> /etc/fstab
-echo "/dev/mapper/centos-root    /       $root_fstype        defaults    0 0" >> /etc/fstab
-echo "/dev/mapper/centos-swap    swap     swap    defaults    0 0"  >> /etc/fstab
-mount -a && echo "Recovery system successful ,check file "/mnt/etc/fstab" and reboot "
-exit
-END_TIME=`date '+%Y-%m-%d %H:%M:%S'`
-echo "Start time  : $START_TIME"
-echo "End time : $END_TIME"
+tar_res
+insgrub_genfstab
+END_TIME=`date "+%Y-%m-%d %H:%M:%S"`
+echo "Start time: $START_TIME"
+echo "End time: $END_TIME"
+exit 
 
 

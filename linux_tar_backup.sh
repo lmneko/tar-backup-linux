@@ -4,17 +4,18 @@
 #need to use in linux livecd system
 ##########################################################
 PATH=/bin:/sbin:/usr/bin:/usr/sbin
-export PATH 
 distro=centos7
 type=full
 DATE=`date +%F`
 START_TIME=`date '+%Y-%m-%d %H:%M:%S'`
-MNT_DIR='/media'
+random=`cat /dev/urandom | od -x | re -d ' ' | head -n 1 | cut -c 7-14`
+MNT_DIR='/mnt'
+boot_part=
+export PATH sel_disk dir_bak type distro DATE random
 # Check that we are root
 (( EUID != 0 )) && exec sudo -- "$0" "$@"
 echo "It is best to use this script in the LiveCD system."
-echo "And it is only to use in msdos part table."
-sleep 2s
+
 function check_part {
   if [ -z $sel_disk ];then         
         read -p "Please input the part of linux system. example : \"/dev/sda\" : " sel_disk      		
@@ -23,43 +24,74 @@ function check_part {
                  read -p "The selected disk is invalid. :"  sel_disk
                  check_part
       fi
-      return
   fi
+  read -p "Weather the linux system part is lvm part?[y\n] " resplvm
+  if [[ "${resplvm}" =~ ^(yes|y)$ ]];then 
+	read -p "Please input the boot part:" boot_part
+	if [ ! -b $boot_part ];then
+		echo "Not exist part and exit..."
+		exit 1
+	fi
+  fi
+  return
 }
 
 function check_bakdir {
-  if [ -z $dir_bak];then         
-        read -p "Please input the directory that best choice of 
-        larger than 10G directory to save the backup file : " dir_bak 
+  if [ -z $dir_bak ];then         
+        read -p "Please input the directory to save the backup file : " dir_bak 
         check_bakdir  
-  else   if [  ! -d $dir_bak ] ; then
+  else   
+	if [  ! -d $dir_bak ] ; then
                 read -p "The selected directory is not exist. :" dir_bak
                 check_bakdir
-        fi  
-        return
+    fi  
   fi
+  dir_bak=${dir_bak%*/}
 }
- check_part
- check_bakdir
 
-mount ${sel_disk} ${MNT_DIR:='/mnt'} && mount ${sel_disk}1 ${MNT_DIR}/boot  \
-|| echo "mount error! and exit..." ;exit
-cd ${MNT_DIR}
-    echo "Backup .Please wait..."
-    sleep 2s
-    tar --xattrs -cvpzf ${dir_bak%*/}/${distro}_${type}_backup_${DATE}.tar.gz \
-    --exclude=./proc \
-    --exclude=./lost+found \
-    --exclude=./mnt \
-    --exclude=./sys \
-    --exclude=./media \
-    --exclude=./run \
-    ./
-    echo "Backup successful!"
-    return
+function mnt_part {
+	mount ${sel_disk} ${MNT_DIR:-'/mnt'}
+	if [ -n ${boot_part} ];then 
+		mount ${boot_part} ${MNT_DIR}/boot || exit 2 ; echo "Mount boot part error."
+	else
+		mount ${sel_disk}1 ${MNT_DIR}/boot 
+	fi
+	if [ $? != 0 ];then
+		echo "Mount error and exit..."
+		exit 1
+	fi
+	mkdir -p /mnt/{dev,proc,sys}
+	mkdir -p /mnt/"${dir_bak}"
+	mount -o bind /dev /mnt/dev
+	mount -o bind /sys /mnt/sys
+	mount -o bind /proc /mnt/proc
+	mount -o bind ${dir_bak} /mnt/${dir_bak}
+}
+check_part
+check_bakdir
+mnt_part
 
-echo "Generating MD5 into backup_${DATE}.MD5"
-md5sum >> ${distro}_${type}_backup_${DATE}.MD5
+chroot ${MNT_DIR}
+echo "Backup .Please wait..."
+sleep 1
+tar --xattrs -cvpjf ${dir_bak}/${distro}_${type}_backup_${DATE}_${random}.tar.bz2 \
+    --exclude=/proc \
+    --exclude=/lost+found \
+    --exclude=/mnt \
+    --exclude=/sys \
+    --exclude=/media \
+    --exclude=/run \
+	--exclude="${dir_bak}" \
+    /
+if [ $? != 0 ];then
+	exit 1
+fi
+exit
+echo "Backup successful!"
+
+echo "Generating MD5 into OS_backup_${DATE}.MD5"
+md5sum  ${dir_bak}/${distro}_${type}_backup_${DATE}_${random}.tar.bz2 \
+>> ${dir_bak}/OS_backup${DATE}.MD5
 END_TIME=`date '+%Y-%m-%d %H:%M:%S'`
 echo "Start time : ${START_TIME}"
 echo "Complete time : ${END_TIME}"
