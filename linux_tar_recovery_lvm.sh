@@ -33,20 +33,23 @@ function chk_bakfile {
 			read -p  "backup file is not exist:" backup_file
 			chk_bakfile
 		 fi
-		 cd ${backup_file%/*} 2>>/dev/null
-		 read -p "${backup_file##*/} has been selected. Weather verify MD5? [y/n]" response
-		 if [[ "${response}" =~ ^(yes|y)$ ]];then
-			if [ -f ./OS_backup*.MD5 ];then
-				bkf_md5=`md5sum ${backup_file} | cut -d " " -f1`
-				md5_bakfile=`cat OS_backup*.MD5 | cut -d " " -f1`
-				[ "$bkf_md5" == "$md5_bakfile" ] && echo "MD5 check successful!" \
-				|| echo "MD5 check fail! and exit..." 
-			else 
-				echo "MD5 file is not exist. "
-				exit 1
-			fi
-		 fi
 	fi
+}
+
+function chk_md5 {
+	cd ${backup_file%/*} 2>>/dev/null
+	read -p "${backup_file##*/} has been selected. Weather verify MD5? [y/n]" response
+	 if [[ "${response}" =~ ^(yes|y)$ ]];then
+		if [ -f ./OS_backup*.MD5 ];then
+			bkf_md5=`md5sum ${backup_file} | cut -d " " -f1`
+			md5_bakfile=`cat OS_backup*.MD5 | cut -d " " -f1`
+			[ "$bkf_md5" == "$md5_bakfile" ] && echo "MD5 check successful!" \
+			|| echo "MD5 check fail! and exit..." 
+		else 
+			echo "MD5 file is not exist. "
+			exit 1
+		fi
+		 fi
 }
 
 function chk_lvmdisk {
@@ -124,7 +127,7 @@ function cre_lvmp {
 	pvcreate ${sel_disk}2
 	vgcreate centos ${sel_disk}2
 	lvcreate -L ${SWAP_SIZE}m -n /dev/centos/swap
-	lvcreate -L 100%FREE -n /dev/centos/root
+	lvcreate -l 100%FREE -n /dev/centos/root
 	mkfs.xfs /dev/centos/root && mount /dev/centos/root /mnt/ || exit 1
 	mkfs.xfs ${sel_disk}1 && mount ${sel_disk}1 /mnt/boot || exit 1
 	mkswap /dev/centos/swap && swapon /dev/centos/swap || exit 1
@@ -141,7 +144,7 @@ function tar_res {
 		fi
 	fi
 	echo "Restore files from the backup file. Please wait..."
-	tar --xattrs -xpf $backup_file -C /mnt \
+	tar --xattrs -xpf $backup_file -C /mnt  --checkpoint=100 --checkpoint-action=dot --totals \
 	&& echo "Restore completed." \
 	|| exit 1;echo "Restore failed amd exit..."
 }
@@ -155,7 +158,7 @@ function insgrub_genfstab {
 	mount -o bind /proc /mnt/proc
 	chroot /mnt
 	grub2-install --target=i386-pc --recheck --boot-dirctory=/boot ${sel_disk} && \
-	grub2-mkconfig -o /boot/grub2/grub.cfg || exit 1
+	grub2-mkconfig -o /boot/grub2/grub.cfg 
 	mv /etc/fstab /etc/fstab.bak
 	chk_lvmdisk
 	boot_uuid=`blkid | grep ${sel_disk}1 | cut -d\" -f2` || exit 1
@@ -176,7 +179,7 @@ function insgrub_genfstab {
 			root_fstype=`blkid | grep ${sel_disk}3 | cut -d\" -f4`
 			swap_uuid=`blkid | grep ${sel_disk}2 | cut -d\"`
 			echo "Update \"/etc/fstab\"..."
-			echo "UUID=$boot_uuid    /boot    $boot_fstype    defaults    0 0" >> /etc/fstab
+			echo "UUID=$boot_uuid    /boot    $boot_fstype    defaults    1 2" >> /etc/fstab
 			echo "#${sel_disk}3" >> /etc/fstab
 			echo "UUID=$root_uuid    /    $root_fstype    defaults    0 0" >> /etc/fstab
 			echo "#${sel_disk}2" >> /etc/fstab
