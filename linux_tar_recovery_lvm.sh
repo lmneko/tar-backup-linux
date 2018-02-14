@@ -54,6 +54,7 @@ function chk_lvmdisk {
 		return
 	else 
 		exit 1
+	fi
 }
 
 function mk_part {
