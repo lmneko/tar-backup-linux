@@ -49,7 +49,7 @@ function chk_md5 {
 			echo "MD5 file is not exist. "
 			exit 1
 		fi
-		 fi
+	  fi
 }
 
 function chk_lvmdisk {
@@ -62,9 +62,9 @@ function chk_lvmdisk {
 
 function mk_part {
     check_part
-	sfdisk -d ${sel_disk} > ${sel_disk##*/}_partion_table.bak && \
-	echo "Partion table has been backed up to the file ${sel_disk##*/}_partion_table.bak" #bckup partion table
-	mkpart primary  2 $(($BOOT_SIZE+2)) \
+    sfdisk -d ${sel_disk} > ${sel_disk##*/}_partion_table.bak && \
+    echo "Partion table has been backed up to the file ${sel_disk##*/}_partion_table.bak" #bckup partion table
+    mkpart primary  2 $(($BOOT_SIZE+2)) \
     mkpart primary $(($BOOT_SIZE+2))  ${ROOT_START}  \
     mkpart primary ${ROOT_START} 100% \
     toggle 1 boot
@@ -80,8 +80,9 @@ function mk_part {
 }
 
 function mkfs_mount {
-	mk_part 
-	mkfs.ext4 ${sel_disk}3 && mount ${sel_disk}3 /mnt || exit 1	
+    mk_part
+    mkdir -p /mnt/boot
+    mkfs.ext4 ${sel_disk}3 && mount ${sel_disk}3 /mnt || exit 1	
     mkfs.ext4 ${sel_disk}1 && mount ${sel_disk}1 /mnt/boot || exit 1
     mkswap ${sel_disk}2 && swapon ${sel_disk}2 || exit 1
 }
@@ -128,13 +129,14 @@ function cre_lvmp {
 	vgcreate centos ${sel_disk}2
 	lvcreate -L ${SWAP_SIZE}m -n /dev/centos/swap
 	lvcreate -l 100%FREE -n /dev/centos/root
+	mkdir -p /mnt/boot
 	mkfs.xfs /dev/centos/root && mount /dev/centos/root /mnt/ || exit 1
 	mkfs.xfs ${sel_disk}1 && mount ${sel_disk}1 /mnt/boot || exit 1
 	mkswap /dev/centos/swap && swapon /dev/centos/swap || exit 1
 }
 
 function tar_res {
-    chk_bakfile
+        chk_bakfile
 	chk_lvmdisk
 	if [[ $boot_lvmdisk -eq "lvm" ]];then
 		cre_lvmp
@@ -146,7 +148,7 @@ function tar_res {
 	echo "Restore files from the backup file. Please wait..."
 	tar --xattrs -xpf $backup_file -C /mnt  --checkpoint=100 --checkpoint-action=dot --totals \
 	&& echo "Restore completed." \
-	|| exit 1;echo "Restore failed amd exit..."
+	|| exit 1
 }
 
 function insgrub_genfstab {
@@ -197,5 +199,3 @@ END_TIME=`date "+%Y-%m-%d %H:%M:%S"`
 echo "Start time: $START_TIME"
 echo "End time: $END_TIME"
 exit 
-
-
