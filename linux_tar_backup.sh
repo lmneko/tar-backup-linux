@@ -8,7 +8,7 @@ distro=centos7
 type=full
 DATE=`date +%F`
 START_TIME=`date '+%Y-%m-%d %H:%M:%S'`
-random=`cat /dev/urandom | od -x | re -d ' ' | head -n 1 | cut -c 7-14`
+random=`cat /dev/urandom | od -x | tr -d ' ' | head -n 1 | cut -c 7-14`
 MNT_DIR='/mnt'
 boot_part=
 export PATH sel_disk dir_bak type distro DATE random
@@ -18,14 +18,18 @@ echo "It is best to use this script in the LiveCD system."
 
 function check_part {
   if [ -z $sel_disk ];then         
-        read -p "Please input the part of linux system. example : \"/dev/sda\" : " sel_disk      		
+        read -p "Please input the part of the system \"/\" part :" sel_disk     		
 		check_part
   else  if [ ! -b $sel_disk ];then
                  read -p "The selected disk is invalid. :"  sel_disk
                  check_part
       fi
   fi
-  read -p "Weather the linux system part is lvm part?[y\n] " resplvm
+  return
+}
+
+function chk_lvm {
+  read -p "Weather the system \"/\" part is lvm?[y\n] " resplvm
   if [[ "${resplvm}" =~ ^(yes|y)$ ]];then 
 	read -p "Please input the boot part:" boot_part
 	if [ ! -b $boot_part ];then
@@ -33,7 +37,6 @@ function check_part {
 		exit 1
 	fi
   fi
-  return
 }
 
 function check_bakdir {
@@ -44,7 +47,7 @@ function check_bakdir {
 	if [  ! -d $dir_bak ] ; then
                 read -p "The selected directory is not exist. :" dir_bak
                 check_bakdir
-    fi  
+        fi  
   fi
   dir_bak=${dir_bak%*/}
 }
@@ -67,11 +70,13 @@ function mnt_part {
 	mount -o bind /proc /mnt/proc
 	mount -o bind ${dir_bak} /mnt/${dir_bak}
 }
+
+chk_lvm
 check_part
 check_bakdir
 mnt_part
 
-chroot ${MNT_DIR}
+chroot ${MNT_DIR} <<-EOF
 echo "Backup .Please wait..."
 sleep 1
 tar --xattrs -cvpjf ${dir_bak}/${distro}_${type}_backup_${DATE}_${random}.tar.bz2 \
@@ -81,8 +86,9 @@ tar --xattrs -cvpjf ${dir_bak}/${distro}_${type}_backup_${DATE}_${random}.tar.bz
     --exclude=/sys \
     --exclude=/media \
     --exclude=/run \
-	--exclude="${dir_bak}" \
+    --exclude="${dir_bak}" \
     /
+EOF
 if [ $? != 0 ];then
 	exit 1
 fi
