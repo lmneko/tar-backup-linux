@@ -84,6 +84,7 @@ tar --xattrs -cvpjf ${dir_bak}/${distro}_${type}_backup_${DATE}_${random}.tar.bz
     --exclude=/lost+found \
     --exclude=/mnt \
     --exclude=/sys \
+    --exclude=/dev \
     --exclude=/media \
     --exclude=/run \
     --exclude="${dir_bak}" \
