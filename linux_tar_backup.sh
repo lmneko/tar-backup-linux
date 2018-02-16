@@ -53,11 +53,11 @@ function check_bakdir {
 }
 
 function mnt_part {
-	mount ${sel_disk} ${MNT_DIR:-'/mnt'}
+	mount ${sel_disk} ${MNT_DIR:="/mnt"}
 	if [ -n ${boot_part} ];then 
-		mount ${boot_part} ${MNT_DIR}/boot || exit 2 ; echo "Mount boot part error."
+		mount ${boot_part} ${MNT_DIR}/boot || exit 1
 	else
-		mount ${sel_disk}1 ${MNT_DIR}/boot 
+		mount ${sel_disk}1 ${MNT_DIR}/boot || exit 1
 	fi
 	if [ $? != 0 ];then
 		echo "Mount error and exit..."
