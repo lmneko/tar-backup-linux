@@ -14,6 +14,10 @@ echo "Please run this scropt in LiveCD system"
 echo "Only for restore the systems that installed on lvm"
 sleep 1
 
+function useage {
+	echo ""
+}
+
 function check_part {
 	if [ -z $sel_disk ];then
 		read -p "Select a empty disk to recovery. :" sel_disk
@@ -33,20 +37,23 @@ function chk_bakfile {
 			read -p  "backup file is not exist:" backup_file
 			chk_bakfile
 		 fi
-		 cd ${backup_file%/*} 2>>/dev/null
-		 read -p "${backup_file##*/} has been selected. Weather verify MD5? [y/n]" response
-		 if [[ "${response}" =~ ^(yes|y)$ ]];then
-			if [ -f ./OS_backup*.MD5 ];then
-				bkf_md5=`md5sum ${backup_file} | cut -d " " -f1`
-				md5_bakfile=`cat OS_backup*.MD5 | cut -d " " -f1`
-				[ "$bkf_md5" == "$md5_bakfile" ] && echo "MD5 check successful!" \
-				|| echo "MD5 check fail! and exit..." 
-			else 
-				echo "MD5 file is not exist. "
-				exit 1
-			fi
-		 fi
 	fi
+}
+
+function chk_md5 {
+	cd ${backup_file%/*} 2>>/dev/null
+	read -p "${backup_file##*/} has been selected. Weather verify MD5? [y/n]" response
+	 if [[ "${response}" =~ ^(yes|y)$ ]];then
+		if [ -f ./OS_backup*.MD5 ];then
+			bkf_md5=`md5sum ${backup_file} | cut -d " " -f1`
+			md5_bakfile=`cat OS_backup*.MD5 | cut -d " " -f1`
+			[ "$bkf_md5" == "$md5_bakfile" ] && echo "MD5 check successful!" \
+			|| echo "MD5 check fail! and exit..." 
+		else 
+			echo "MD5 file is not exist. "
+			exit 1
+		fi
+	  fi
 }
 
 function chk_lvmdisk {
@@ -54,13 +61,14 @@ function chk_lvmdisk {
 		return
 	else 
 		exit 1
+	fi
 }
 
 function mk_part {
     check_part
-	sfdisk -d ${sel_disk} > ${sel_disk##*/}_partion_table.bak && \
-	echo "Partion table has been backed up to the file ${sel_disk##*/}_partion_table.bak" #bckup partion table
-	mkpart primary  2 $(($BOOT_SIZE+2)) \
+    sfdisk -d ${sel_disk} > ${sel_disk##*/}_partion_table.bak && \
+    echo "Partion table has been backed up to the file ${sel_disk##*/}_partion_table.bak" #bckup partion table
+    mkpart primary  2 $(($BOOT_SIZE+2)) \
     mkpart primary $(($BOOT_SIZE+2))  ${ROOT_START}  \
     mkpart primary ${ROOT_START} 100% \
     toggle 1 boot
@@ -76,8 +84,9 @@ function mk_part {
 }
 
 function mkfs_mount {
-	mk_part 
-	mkfs.ext4 ${sel_disk}3 && mount ${sel_disk}3 /mnt || exit 1	
+    mk_part
+    mkdir -p /mnt/boot
+    mkfs.ext4 ${sel_disk}3 && mount ${sel_disk}3 /mnt || exit 1	
     mkfs.ext4 ${sel_disk}1 && mount ${sel_disk}1 /mnt/boot || exit 1
     mkswap ${sel_disk}2 && swapon ${sel_disk}2 || exit 1
 }
@@ -123,14 +132,15 @@ function cre_lvmp {
 	pvcreate ${sel_disk}2
 	vgcreate centos ${sel_disk}2
 	lvcreate -L ${SWAP_SIZE}m -n /dev/centos/swap
-	lvcreate -L 100%FREE -n /dev/centos/root
+	lvcreate -l 100%FREE -n /dev/centos/root
+	mkdir -p /mnt/boot
 	mkfs.xfs /dev/centos/root && mount /dev/centos/root /mnt/ || exit 1
 	mkfs.xfs ${sel_disk}1 && mount ${sel_disk}1 /mnt/boot || exit 1
 	mkswap /dev/centos/swap && swapon /dev/centos/swap || exit 1
 }
 
 function tar_res {
-    chk_bakfile
+        chk_bakfile
 	chk_lvmdisk
 	if [[ $boot_lvmdisk -eq "lvm" ]];then
 		cre_lvmp
@@ -140,9 +150,9 @@ function tar_res {
 		fi
 	fi
 	echo "Restore files from the backup file. Please wait..."
-	tar --xattrs -xpf $backup_file -C /mnt \
+	tar --xattrs -xpf $backup_file -C /mnt  --checkpoint=100 --checkpoint-action=dot --totals \
 	&& echo "Restore completed." \
-	|| exit 1;echo "Restore failed amd exit..."
+	|| exit 1
 }
 
 function insgrub_genfstab {
@@ -152,40 +162,75 @@ function insgrub_genfstab {
 	mount -o bind /dev /mnt/dev
 	mount -o bind /sys /mnt/sys
 	mount -o bind /proc /mnt/proc
-	chroot /mnt
-	grub2-install --target=i386-pc --recheck --boot-dirctory=/boot ${sel_disk} && \
-	grub2-mkconfig -o /boot/grub2/grub.cfg || exit 1
+	chroot /mnt <<-EOF
+	#grub2-install --target=i386-pc --recheck --boot-dirctory=/boot ${sel_disk} && \
+	grub2-install --target=i386-pc --recheck ${sel_disk} && \
+	grub2-mkconfig -o /boot/grub2/grub.cfg
 	mv /etc/fstab /etc/fstab.bak
+	EOF
+
 	chk_lvmdisk
+	echo "Update \"/etc/fstab\"..."
 	boot_uuid=`blkid | grep ${sel_disk}1 | cut -d\" -f2` || exit 1
-	boot_fstype=`blkid | grep ${sel_disk}1 | cut -d\" -f4` 
-	if [[ $boot_lvmdisk -eq "lvm" ]];then		
+	boot_fstype=`blkid | grep ${sel_disk}1 | cut -d\" -f4`
+	export boot_uuid boot_fstype
+	if [[ $boot_lvmdisk -eq "lvm" ]];then
+		chroot /mnt <<-EOF
 		root_uuid=`blkid | grep "/dev/mapper/centos-root" | cut -d\" -f2`
 		root_fstype=`blkid | grep "/dev/mapper/centos-root" | cut -d\" -f4`
-		swap_uuid=`blkid | grep "/dev/mapper/centos-swap" | cut -d\"`					
-		echo "Update \"/etc/fstab\"..."
+		swap_uuid=`blkid | grep "/dev/mapper/centos-swap" | cut -d\" -f2`					
+		echo "${sel_disk}1" >> /etc/fstab
 		echo "UUID=$boot_uuid    /boot    $boot_fstype    defaults    0 0" >> /etc/fstab
 		echo "#/dev/mapper/centos-root" >> /etc/fstab
 		echo "UUID=$root_uuid    /    $root_fstype    defaults    0 0" >> /etc/fstab
 		echo "#/dev/mapper/centos-swap" >> /etc/fstab
 		echo "UUID=$swap_uuid    swap    swap    defaults    0 0" >> /etc/fstab
+		EOF
 	else
 		if [[ $boot_lvmdisk -eq "disk" ]];then
+			chroot /mnt <<-EOF
 			root_uuid=`blkid | grep ${sel_disk}3 | cut -d\" -f2`
 			root_fstype=`blkid | grep ${sel_disk}3 | cut -d\" -f4`
-			swap_uuid=`blkid | grep ${sel_disk}2 | cut -d\"`
-			echo "Update \"/etc/fstab\"..."
-			echo "UUID=$boot_uuid    /boot    $boot_fstype    defaults    0 0" >> /etc/fstab
+			swap_uuid=`blkid | grep ${sel_disk}2 | cut -d\" -f2`
+			echo "${sel_disk}1" >> /etc/fstab
+			echo "UUID=$boot_uuid    /boot    $boot_fstype    defaults    1 2" >> /etc/fstab
 			echo "#${sel_disk}3" >> /etc/fstab
-			echo "UUID=$root_uuid    /    $root_fstype    defaults    0 0" >> /etc/fstab
+			echo "UUID=$root_uuid    /    $root_fstype    defaults    0 0" >> /mnt/etc/fstab
 			echo "#${sel_disk}2" >> /etc/fstab
 			echo "UUID=$swap_uuid    swap    swap    defaults    0 0" >> /etc/fstab
+			EOF
 		fi
 	fi
-	mount -a && echo " Recovery system successful,check file \"/mnt/etc/fstab\" and reboot"	\
-    || exit 1
-	exit
+	echo "Recovery system successful,check file \"/mnt/etc/fstab\" and reboot"
+	return
 }
+
+while getopts ":B:S:b:p:dl" opt; do
+	case "$opt" in
+		B)
+			BOOT_SIZE=$OPTARG
+			;;
+		S)
+			SWAP_SIZE=$OPTARG
+			;;
+		b)
+			backup_file=$OPTARG
+			;;
+		p)
+			sel_disk=$OPTARG
+			;;
+		d)
+			boot_lvmdisk=disk
+			;;
+		l)
+			boot_lvmdisk=lvm
+			;;
+		'?')
+			echo "Fatal error: invalid options..."
+			exit 1
+			;;
+	esac
+done
 
 tar_res
 insgrub_genfstab
@@ -193,5 +238,3 @@ END_TIME=`date "+%Y-%m-%d %H:%M:%S"`
 echo "Start time: $START_TIME"
 echo "End time: $END_TIME"
 exit 
-
-
