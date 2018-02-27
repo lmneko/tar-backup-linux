@@ -176,11 +176,13 @@ function insgrub_genfstab {
 	mount -o bind /sys /mnt/sys
 	mount -o bind /proc /mnt/proc
 	chroot /mnt <<-EOF
+	grub_ins=$(which grub2-install) || grub_ins=$(which grub-install)
+	grub_cnf=$(which grub2-mkconfig || grub_cnf=$(which grub-mkconfig)
 	#grub2-install --target=i386-pc --recheck --boot-dirctory=/boot ${sel_disk} && \
-	grub2-install --target=i386-pc --recheck ${sel_disk} && \
-	grub2-mkconfig -o /boot/grub2/grub.cfg
+	grub_ins --target=i386-pc --recheck ${sel_disk} && \
+	grub_cnf -o /boot/grub2/grub.cfg
 	mv /etc/fstab /etc/fstab.bak
-	EOF
+    EOF
 
 	chk_lvmdisk
 	echo "Update \"/etc/fstab\"..."
@@ -191,7 +193,7 @@ function insgrub_genfstab {
 		chroot /mnt <<-EOF
 		root_uuid=`blkid | grep "/dev/mapper/centos-root" | cut -d\" -f2`
 		root_fstype=`blkid | grep "/dev/mapper/centos-root" | cut -d\" -f4`
-		swap_uuid=`blkid | grep "/dev/mapper/centos-swap" | cut -d\" -f2`					
+		swap_uuid=`blkid | grep "/dev/mapper/centos-swap" | cut -d\" -f2`
 		echo "${sel_disk}1" >> /etc/fstab
 		echo "UUID=$boot_uuid    /boot    $boot_fstype    defaults    0 0" >> /etc/fstab
 		echo "#/dev/mapper/centos-root" >> /etc/fstab
