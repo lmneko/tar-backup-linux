@@ -1,5 +1,5 @@
 #!/bin/bash
-#2018-02-02
+
 PATH=/bin:/sbin:/usr/bin:/usr/sbin
 START_TIME=`date "+%Y-%m-%d %H:%M:%S"`
 BOOT_SIZE=1000
@@ -8,6 +8,7 @@ boot_biosefi=bios
 boot_lvmdisk=lvm
 ROOT_START=$((${BOOT_SIZE}+${SWAP_SIZE}+2))
 scriptname=$(basename "$0")
+chkmd5=no
 export PATH sel_disk START_TIME
 ((EUID!=0)) && exec sudo -- "$0" "$@"
 
@@ -15,19 +16,25 @@ function usage {
 	cat << EOF
 	Script to recovery the Centos  from tar backup file
 	Please run this scropt in LiveCD system
-	Usage: $scriptname [part-size] SIZE [options] device [part-type] [lvm|disk]
+	Assumptions:
+	Dont mount any partion on "/mnt",the "/mnt" will be used to mount recovery partion
+		
+	Usage: $scriptname [part-size] SIZE [options] device [part-type] -ld
 	
 	-b                              Select the backup file to recovery
+	-c                              check backup file md5
 	device                          Device to restore (e.g. /dev/sda)
-	  -p                            Select device
-	part-type                       The root partition device type for the backup file [lvm|disk]
-	  -l                            lvm
-	  -d                            disk
+	-p                              Select device
+	part-type                       The root partition device type for 
+	                                the backup file [lvm|disk],default:"lvm"
+	-l                              lvm
+	-d                              disk
 	part-size                       Default unit is MB
-	  -B                            The boot part size. default=1000
-	  -S                            The swap part size. default=8000
+	-B                              The boot part size. default=1000
+	-S                              The swap part size. default=8000
 	-h                              Show help message
 	
+	Example: ./${scriptname} -b centos7_full_backup_2018-02-02_033615b7.tar.bz2 -p /dev/sda 
 EOF
 }
 
@@ -35,9 +42,10 @@ function check_part {
 	if [ -z $sel_disk ];then
 		read -p "Select a empty disk to recovery. :" sel_disk
 		check_part
-	else if [ ! -b $sel_disk ];then
-			read -p "The selected disk is invalid. :" sel_disk
-			check_part
+	else 
+	    if [ ! -b $sel_disk ];then
+			echo "The selected disk is invalid." 
+			exit 1
 		fi
 	fi
 }
@@ -46,27 +54,25 @@ function chk_bakfile {
 	if [ -z ${backup_file} ];then
 		read -p "Select the *.tar.bz2 backup file to restore: " backup_file
 		chk_bakfile
-	else if [ ! -f ${backup_file} ];then
-			read -p  "backup file is not exist:" backup_file
-			chk_bakfile
-		 fi
+	else 
+	    if [ ! -f ${backup_file} ];then
+			echo "backup file is not exist." 
+			exit 1
+		fi
 	fi
 }
 
 function chk_md5 {
 	cd ${backup_file%/*} 2>>/dev/null
-	read -p "${backup_file##*/} has been selected. Weather verify MD5? [y/n]" response
-	 if [[ "${response}" =~ ^(yes|y)$ ]];then
-		if [ -f ./OS_backup*.MD5 ];then
-			bkf_md5=`md5sum ${backup_file} | cut -d " " -f1`
-			md5_bakfile=`cat OS_backup*.MD5 | cut -d " " -f1`
-			[ "$bkf_md5" == "$md5_bakfile" ] && echo "MD5 check successful!" \
-			|| echo "MD5 check fail! and exit..." 
-		else 
-			echo "MD5 file is not exist. "
-			exit 1
-		fi
-	  fi
+	if [ -f ./OS_backup*.MD5 ];then
+		bkf_md5=`md5sum ${backup_file} | cut -d " " -f1`
+		md5_bakfile=`cat OS_backup*.MD5 | cut -d " " -f1`
+		[ "$bkf_md5" == "$md5_bakfile" ] && echo "MD5 check successful!" \
+		|| echo "MD5 check fail! and exit..." 
+	else 
+		echo "MD5 file is not exist. "
+		exit 1
+	fi
 }
 
 function chk_lvmdisk {
@@ -154,6 +160,7 @@ function cre_lvmp {
 
 function tar_res {
     chk_bakfile
+	test "$chkmd5" = "yes" && chk_md5
 	chk_lvmdisk
 	if [[ $boot_lvmdisk -eq "lvm" ]];then
 		cre_lvmp
@@ -176,17 +183,17 @@ function insgrub_genfstab {
 	mount -o bind /sys /mnt/sys
 	mount -o bind /proc /mnt/proc
 	chroot /mnt <<-EOF
-	grub_ins=$(which grub2-install) || grub_ins=$(which grub-install)
-	grub_cnf=$(which grub2-mkconfig || grub_cnf=$(which grub-mkconfig)
+	grub_ins=$(which grub2-install) || grub_ins=$(which grub-install) || exit 1
+	grub_cnf=$(which grub2-mkconfig || grub_cnf=$(which grub-mkconfig) || exit 1
 	#grub2-install --target=i386-pc --recheck --boot-dirctory=/boot ${sel_disk} && \
-	grub_ins --target=i386-pc --recheck ${sel_disk} && \
-	grub_cnf -o /boot/grub2/grub.cfg
+	$grub_ins --target=i386-pc --recheck ${sel_disk} && \
+	$getoptsrub_cnf -o /boot/grub2/grub.cfg
 	mv /etc/fstab /etc/fstab.bak
-    EOF
+EOF
 
 	chk_lvmdisk
 	echo "Update \"/etc/fstab\"..."
-	boot_uuid=`blkid | grep ${sel_disk}1 | cut -d\" -f2` || exit 1
+	boot_uuid=`blkid | grep ${sel_disk}1 | cut -d\" -f2`
 	boot_fstype=`blkid | grep ${sel_disk}1 | cut -d\" -f4`
 	export boot_uuid boot_fstype
 	if [[ $boot_lvmdisk -eq "lvm" ]];then
@@ -220,16 +227,29 @@ function insgrub_genfstab {
 	return
 }
 
-while getopts ":B:S:b:p:dlh" opt; do
+function invalid_exit {
+	echo "Invalid value and exit..."
+	usage
+	exit 1
+}
+
+while getopts ":B:S:b:p:cdlh" opt; do
 	case "$opt" in
 		B)
+			test -z `echo $OPTARG | grep -e "^[0-9]\{3,\}[0-9]$"` \
+			&& invalid_exit
 			BOOT_SIZE=$OPTARG
 			;;
 		S)
+			test -z `echo $OPTARG | grep -e "^[0-9]\{3,\}[0-9]$"` \
+			&& invalid_exit
 			SWAP_SIZE=$OPTARG
 			;;
 		b)
 			backup_file=$OPTARG
+			;;
+		c)
+			chkmd5=yes
 			;;
 		p)
 			sel_disk=$OPTARG
@@ -246,6 +266,7 @@ while getopts ":B:S:b:p:dlh" opt; do
 			;;
 		'?')
 			echo "Fatal error: invalid options..."
+			usage
 			exit 1
 			;;
 	esac

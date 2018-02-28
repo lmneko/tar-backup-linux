@@ -1,8 +1,7 @@
-﻿#!/bin/bash
-#2018-01-29 
+#!/bin/bash
 #use tar to backup the whole linux system ,and also recovery with tar 
 #need to use in linux livecd system
-##########################################################
+
 PATH=/bin:/sbin:/usr/bin:/usr/sbin
 distro=centos7
 type=full
@@ -16,23 +15,26 @@ boot_part=
 scriptname=$(basename "$0")
 export PATH sel_disk dir_bak type distro DATE random
 # Check that we are root
-(( EUID != 0 )) && exec sudo -- "$0" "$@"
+((EUID!=0)) && exec sudo -- "$0" "$@"
 
 function usage {
 	cat << EOF
 	Script to use tar to backup the Centos system
 	Please run this scropt in LiveCD system
-	Usage: $scriptname [options] device [part-type] [lvm|disk]
+	Assumptions:
+	Dont mount any partion on "/mnt",the "/mnt" will be used to mount backup partion
+		
+	Usage: $scriptname [options] device [part-type] -ld
 	-a                              Arch dir to save backup file default=\${pwd}
-	-s                              Select the backup part (e.g. /dev/sda
-	                                if the part is lvm: bootpart: /dev/sda 
-                                                        rootpart: /dev/centos/root)
+	-s                              Select the backup part (e.g. /dev/sda)
+	-b                              Select the boot part 
+	                                if the part is lvm need to use this option
 	part-type                       The root partition device type for 
 	                                the backup file [lvm|disk]
-	  -l                            lvm
-	  -d                            disk
+	-l                              lvm
+	-d                              disk
 	-h                              Show help message
-	
+	Example ./${scriptname} -a /media -b /dev/sda -s /dev/centos/root -l
 EOF
 }
 
@@ -42,8 +44,8 @@ function check_part {
 		check_part
 	else  
 		if [ ! -b $sel_disk ];then
-                 read -p "The selected disk is invalid. :"  sel_disk
-                 check_part
+                 echo "The selected disk is invalid."
+                 exit 1
 		fi
 	fi
 	return
@@ -54,17 +56,21 @@ function chk_lvm {
 		read -p "Weather the system \"/\" part is lvm?[y\n] " resplvm
 		if [[ "${resplvm}" =~ ^(yes|y)$ ]];then
 			boot_lvmdisk=lvm
+		elif [[ "${resplvm}" =~ ^(no|n)$ ]];then
+				boot_lvmdisk=disk
 		else
-			boot_lvmdisk=disk
+			exit 1
 		fi	
 	fi
 	if [[ "$boot_lvmdisk" == "lvm" ]];then
 		if [ -z $boot_part ];then
 			read -p "Please input the boot part:" boot_part
-		fi
-		if [ ! -b $boot_part ];then
+			chk_lvm
+		else
+			if [ ! -b $boot_part ];then
 				echo "The boot part is not exist and exit..."
 				exit 1
+			fi
 		fi
 	fi
 }
@@ -75,8 +81,8 @@ function check_bakdir {
         check_bakdir  
 	else   
 		if [  ! -d $dir_bak ] ; then
-                read -p "The selected directory is not exist. :" dir_bak
-                check_bakdir
+                echo "The selected directory is not exist."
+                exit 1
         fi  
 	fi
 	dir_bak=${dir_bak%*/}
@@ -120,7 +126,6 @@ EOF
 	if [ $? != 0 ];then
 		exit 1
 	fi
-	exit
 	echo "Backup successful!"
 
 	echo "Generating MD5 into OS_backup_${DATE}.MD5"
@@ -131,10 +136,13 @@ EOF
 	echo "Complete time : ${END_TIME}"
 }
 
-while getopts ":a:s:c:dlh" opt; do
+while getopts ":a:b:s:c:dlh" opt; do
 	case "$opt" in
 		a)
 			dir_bak=$OPTARG
+			;;
+		b)
+			boot_part=$OPTARG
 			;;
 		s)
 			sel_disk=$OPTARG
@@ -154,6 +162,7 @@ while getopts ":a:s:c:dlh" opt; do
 			;;
 		'?')
 			echo "Fatal error: invalid options..."
+			usage
 			exit 1
 			;;
 	esac
