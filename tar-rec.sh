@@ -5,10 +5,11 @@ START_TIME=`date "+%Y-%m-%d %H:%M:%S"`
 BOOT_SIZE=1000
 SWAP_SIZE=8000   #size MB
 boot_biosefi=bios
-boot_lvmdisk=lvm
+boot_lvmdisk=
 ROOT_START=$((${BOOT_SIZE}+${SWAP_SIZE}+2))
 scriptname=$(basename "$0")
 chkmd5=no
+with_rsync=0
 export PATH sel_disk START_TIME
 ((EUID!=0)) && exec sudo -- "$0" "$@"
 
@@ -18,6 +19,7 @@ function usage {
 	Please run this scropt in LiveCD system
 	Assumptions:
 	Dont mount any partion on "/mnt",the "/mnt" will be used to mount recovery partion
+	When use lvm option,please ensure do not exist the same vgname and lvname of the bakcup part
 		
 	Usage: $scriptname [part-size] SIZE [options] device [part-type] -ld
 	
@@ -26,7 +28,7 @@ function usage {
 	device                          Device to restore (e.g. /dev/sda)
 	-p                              Select device
 	part-type                       The root partition device type for 
-	                                the backup file [lvm|disk],default:"lvm"
+	                                the backup file [lvm|disk]
 	-l                              lvm
 	-d                              disk
 	part-size                       Default unit is MB
@@ -34,7 +36,7 @@ function usage {
 	-S                              The swap part size. default=8000
 	-h                              Show help message
 	
-	Example: ./${scriptname} -b centos7_full_backup_2018-02-02_033615b7.tar.bz2 -p /dev/sda 
+	Example: ./${scriptname} -b centos7_2_lvm_backup_2018-02-02_033615b7.tar.bz2 -p /dev/sda -l
 EOF
 }
 
@@ -75,18 +77,11 @@ function chk_md5 {
 	fi
 }
 
-function chk_lvmdisk {
-	if [[ $boot_lvmdisk =~ ^(lvm|disk)$ ]];then
-		return
-	else 
-		exit 1
-	fi
-}
-
 function mk_part {
     check_part
     sfdisk -d ${sel_disk} > ${sel_disk##*/}_partion_table.bak && \
     echo "Partion table has been backed up to the file ${sel_disk##*/}_partion_table.bak" #bckup partion table
+    parted ${sel_disk} -s -a optimal mklabel msdos \
     mkpart primary  2 $(($BOOT_SIZE+2)) \
     mkpart primary $(($BOOT_SIZE+2))  ${ROOT_START}  \
     mkpart primary ${ROOT_START} 100% \
@@ -106,9 +101,22 @@ function mkfs_mount {
     mk_part
     mkdir -p /mnt/boot
     mkfs.ext4 ${sel_disk}3 && mount ${sel_disk}3 /mnt || exit 1	
+    mkdir /mnt/boot
     mkfs.ext4 ${sel_disk}1 && mount ${sel_disk}1 /mnt/boot || exit 1
     mkswap ${sel_disk}2 && swapon ${sel_disk}2 || exit 1
 }
+
+#function rec_with_rsync {
+#	mkfs_mount
+#	mkdir -p /$systempart/{dev,proc,sys,run}
+#    mount -o bind /dev /$systempart/dev
+#    mount -o bind /sys /$systempart/sys
+#    mount -o bind /proc /$systempart/proc
+#    mount -o bind /run /$systempart/run
+#	chroot /$systempart <<-EOF
+#	rsync -aviHAXKh --partial --delete / /mnt
+#EOF
+#}
 
 function mkpart_lvm {
 	check_part
@@ -152,22 +160,22 @@ function cre_lvmp {
 	vgcreate centos ${sel_disk}2
 	lvcreate -L ${SWAP_SIZE}m -n /dev/centos/swap
 	lvcreate -l 100%FREE -n /dev/centos/root
+	mkfs.xfs -f /dev/centos/root && mount /dev/centos/root /mnt/ || exit 1
 	mkdir -p /mnt/boot
-	mkfs.xfs /dev/centos/root && mount /dev/centos/root /mnt/ || exit 1
-	mkfs.xfs ${sel_disk}1 && mount ${sel_disk}1 /mnt/boot || exit 1
+	mkfs.xfs -f ${sel_disk}1 && mount ${sel_disk}1 /mnt/boot || exit 1
 	mkswap /dev/centos/swap && swapon /dev/centos/swap || exit 1
 }
 
 function tar_res {
-    chk_bakfile
+	chk_bakfile
 	test "$chkmd5" = "yes" && chk_md5
-	chk_lvmdisk
-	if [[ $boot_lvmdisk -eq "lvm" ]];then
+	if [[ $boot_lvmdisk == "lvm" ]];then
 		cre_lvmp
-	else 
-		if [[ $boot_lvmdisk -eq "disk" ]];then
+	elif [[ $boot_lvmdisk == "disk" ]];then
 			mkfs_mount
-		fi
+	else 
+		echo "The part type invild!"
+		exit 1
 	fi
 	echo "Restore files from the backup file. Please wait..."
 	tar --xattrs -xpf $backup_file -C /mnt  --checkpoint=100 --checkpoint-action=dot --totals \
@@ -178,51 +186,29 @@ function tar_res {
 function insgrub_genfstab {
 	echo "Install grub2 and gen \"/etc/fstab\"..."
 	sleep 1
-	mkdir -p /mnt/{dev,proc,sys}
-	mount -o bind /dev /mnt/dev
-	mount -o bind /sys /mnt/sys
-	mount -o bind /proc /mnt/proc
-	chroot /mnt <<-EOF
 	grub_ins=$(which grub2-install) || grub_ins=$(which grub-install) || exit 1
-	grub_cnf=$(which grub2-mkconfig || grub_cnf=$(which grub-mkconfig) || exit 1
-	#grub2-install --target=i386-pc --recheck --boot-dirctory=/boot ${sel_disk} && \
-	$grub_ins --target=i386-pc --recheck ${sel_disk} && \
-	$getoptsrub_cnf -o /boot/grub2/grub.cfg
-	mv /etc/fstab /etc/fstab.bak
-EOF
+	grub_cnf=$(which grub2-mkconfig) || grub_cnf=$(which grub-mkconfig) || exit 1
+	grub2-install --target=i386-pc --recheck --boot-directory=/mnt/boot ${sel_disk} && \
+	$getoptsrub_cnf -o /mnt/boot/grub2/grub.cfg
 
-	chk_lvmdisk
 	echo "Update \"/etc/fstab\"..."
+	mv /mnt/etc/fstab /mnt/etc/fstab.bak
 	boot_uuid=`blkid | grep ${sel_disk}1 | cut -d\" -f2`
 	boot_fstype=`blkid | grep ${sel_disk}1 | cut -d\" -f4`
 	export boot_uuid boot_fstype
-	if [[ $boot_lvmdisk -eq "lvm" ]];then
-		chroot /mnt <<-EOF
+	if [[ $boot_lvmdisk == "lvm" ]];then
+		
 		root_uuid=`blkid | grep "/dev/mapper/centos-root" | cut -d\" -f2`
 		root_fstype=`blkid | grep "/dev/mapper/centos-root" | cut -d\" -f4`
 		swap_uuid=`blkid | grep "/dev/mapper/centos-swap" | cut -d\" -f2`
-		echo "${sel_disk}1" >> /etc/fstab
-		echo "UUID=$boot_uuid    /boot    $boot_fstype    defaults    0 0" >> /etc/fstab
-		echo "#/dev/mapper/centos-root" >> /etc/fstab
-		echo "UUID=$root_uuid    /    $root_fstype    defaults    0 0" >> /etc/fstab
-		echo "#/dev/mapper/centos-swap" >> /etc/fstab
-		echo "UUID=$swap_uuid    swap    swap    defaults    0 0" >> /etc/fstab
-		EOF
-	else
-		if [[ $boot_lvmdisk -eq "disk" ]];then
-			chroot /mnt <<-EOF
-			root_uuid=`blkid | grep ${sel_disk}3 | cut -d\" -f2`
-			root_fstype=`blkid | grep ${sel_disk}3 | cut -d\" -f4`
-			swap_uuid=`blkid | grep ${sel_disk}2 | cut -d\" -f2`
-			echo "${sel_disk}1" >> /etc/fstab
-			echo "UUID=$boot_uuid    /boot    $boot_fstype    defaults    1 2" >> /etc/fstab
-			echo "#${sel_disk}3" >> /etc/fstab
-			echo "UUID=$root_uuid    /    $root_fstype    defaults    0 0" >> /mnt/etc/fstab
-			echo "#${sel_disk}2" >> /etc/fstab
-			echo "UUID=$swap_uuid    swap    swap    defaults    0 0" >> /etc/fstab
-			EOF
-		fi
+	elif [[ $boot_lvmdisk == "disk" ]];then		
+		root_uuid=`blkid | grep ${sel_disk}3 | cut -d\" -f2`
+		root_fstype=`blkid | grep ${sel_disk}3 | cut -d\" -f4`
+		swap_uuid=`blkid | grep ${sel_disk}2 | cut -d\" -f2`
 	fi
+	echo "UUID=$boot_uuid    /boot    $boot_fstype    defaults    0 0" >> /mnt/etc/fstab
+	echo "UUID=$root_uuid    /    $root_fstype    defaults    0 0" >> /mnt/etc/fstab
+	echo "UUID=$swap_uuid    swap    swap    defaults    0 0" >> /mnt/etc/fstab
 	echo "Recovery system successful,check file \"/mnt/etc/fstab\" and reboot"
 	return
 }
@@ -236,12 +222,12 @@ function invalid_exit {
 while getopts ":B:S:b:p:cdlh" opt; do
 	case "$opt" in
 		B)
-			test -z `echo $OPTARG | grep -e "^[0-9]\{3,\}[0-9]$"` \
+			test -z `echo $OPTARG | grep -e "^[0-9]\{3,4\}[0-9]$"` \
 			&& invalid_exit
 			BOOT_SIZE=$OPTARG
 			;;
 		S)
-			test -z `echo $OPTARG | grep -e "^[0-9]\{3,\}[0-9]$"` \
+			test -z `echo $OPTARG | grep -e "^[0-9]\{3,4\}[0-9]$"` \
 			&& invalid_exit
 			SWAP_SIZE=$OPTARG
 			;;
@@ -271,7 +257,6 @@ while getopts ":B:S:b:p:cdlh" opt; do
 			;;
 	esac
 done
-
 tar_res
 insgrub_genfstab
 END_TIME=`date "+%Y-%m-%d %H:%M:%S"`

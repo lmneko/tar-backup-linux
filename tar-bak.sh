@@ -3,15 +3,16 @@
 #need to use in linux livecd system
 
 PATH=/bin:/sbin:/usr/bin:/usr/sbin
-distro=centos7
+distro=centos7_2
 type=full
 DATE=`date +%F`
 START_TIME=`date '+%Y-%m-%d %H:%M:%S'`
 random=`cat /dev/urandom | od -x | tr -d ' ' | head -n 1 | cut -c 7-14`
 run_dir=`pwd`
-MNT_DIR='/mnt'
+MNT_DIR='/target'
 boot_lvmdisk=
 boot_part=
+tar_exclude=
 scriptname=$(basename "$0")
 export PATH sel_disk dir_bak type distro DATE random
 # Check that we are root
@@ -22,19 +23,20 @@ function usage {
 	Script to use tar to backup the Centos system
 	Please run this scropt in LiveCD system
 	Assumptions:
-	Dont mount any partion on "/mnt",the "/mnt" will be used to mount backup partion
+	Dont mount any partion on "$MNT_DIR",the "$MNT_DIR" will be used to mount backup partion
 		
 	Usage: $scriptname [options] device [part-type] -ld
-	-a                              Arch dir to save backup file default=\${pwd}
+	-a                              Arch diretctory to save backup file default=${run_dir}
+	-e                              --exclude tar options
 	-s                              Select the backup part (e.g. /dev/sda)
 	-b                              Select the boot part 
-	                                if the part is lvm need to use this option
+	-m                              backup part mount dir
 	part-type                       The root partition device type for 
 	                                the backup file [lvm|disk]
 	-l                              lvm
 	-d                              disk
 	-h                              Show help message
-	Example ./${scriptname} -a /media -b /dev/sda -s /dev/centos/root -l
+	Example ./${scriptname} -a /media -b /dev/sda1 -s /dev/centos/root -l
 EOF
 }
 
@@ -62,15 +64,13 @@ function chk_lvm {
 			exit 1
 		fi	
 	fi
-	if [[ "$boot_lvmdisk" == "lvm" ]];then
-		if [ -z $boot_part ];then
-			read -p "Please input the boot part:" boot_part
-			chk_lvm
-		else
-			if [ ! -b $boot_part ];then
-				echo "The boot part is not exist and exit..."
-				exit 1
-			fi
+	if [ -z $boot_part ];then
+		read -p "Please input the boot part:" boot_part
+		chk_lvm
+	else
+		if [ ! -b $boot_part ];then
+			echo "The boot part is not exist and exit..."
+			exit 1
 		fi
 	fi
 }
@@ -89,18 +89,15 @@ function check_bakdir {
 }
 
 function mnt_part {
-	mount ${sel_disk} ${MNT_DIR:="/mnt"}
+	mkdir $MNT_DIR 2>/dev/null
+	mount ${sel_disk} ${MNT_DIR}
+	mkdir $MNT_DIR/boot 2>/dev/null
 	if [ -n ${boot_part} ];then 
 		mount ${boot_part} ${MNT_DIR}/boot || exit 1
 	else
-		mount ${sel_disk}1 ${MNT_DIR}/boot || exit 1
-	fi
-	
-	if [ $? != 0 ];then
-		echo "Mount error and exit..."
+		echo "Boot part do not select and exit..."
 		exit 1
 	fi
-	mkdir -p ${MNT_DIR}/{dev,proc,sys}
 	mkdir -p ${MNT_DIR}/"${dir_bak}"
 	mount -o bind /dev ${MNT_DIR}/dev
 	mount -o bind /sys ${MNT_DIR}/sys
@@ -112,7 +109,7 @@ function tar_bak {
 	echo "Backup .Please wait..."
 	sleep 1
 	chroot ${MNT_DIR} <<-EOF
-	tar --xattrs -cvpjf ${dir_bak}/${distro}_${type}_backup_${DATE}_${random}.tar.bz2 \
+	tar --xattrs -cvpjf ${dir_bak}/${distro}_${boot_lvmdisk}_backup_${DATE}_${random}.tar.bz2 \
     --exclude=/proc \
     --exclude=/lost+found \
     --exclude=/mnt \
@@ -121,6 +118,7 @@ function tar_bak {
     --exclude=/media \
     --exclude=/run \
     --exclude="${dir_bak}" \
+    "$tar_exclude" \
     /
 EOF
 	if [ $? != 0 ];then
@@ -129,14 +127,14 @@ EOF
 	echo "Backup successful!"
 
 	echo "Generating MD5 into OS_backup_${DATE}.MD5"
-	md5sum  ${dir_bak}/${distro}_${type}_backup_${DATE}_${random}.tar.bz2 \
+	md5sum  ${dir_bak}/${distro}_${boot_lvmdisk}_backup_${DATE}_${random}.tar.bz2 \
 	>> ${dir_bak}/OS_backup${DATE}.MD5
 	END_TIME=`date '+%Y-%m-%d %H:%M:%S'`
 	echo "Start time : ${START_TIME}"
 	echo "Complete time : ${END_TIME}"
 }
 
-while getopts ":a:b:s:c:dlh" opt; do
+while getopts ":a:b:e:m:s:c:dlh" opt; do
 	case "$opt" in
 		a)
 			dir_bak=$OPTARG
@@ -144,11 +142,14 @@ while getopts ":a:b:s:c:dlh" opt; do
 		b)
 			boot_part=$OPTARG
 			;;
+		e)
+			tar_exclude="--exclude=$OPTARG"
+			;;
+		m)
+			MNT_DIR=$OPTARG
+			;;
 		s)
 			sel_disk=$OPTARG
-			;;
-		c)
-			MNT_DIR=$OPTARG
 			;;
 		d)
 			boot_lvmdisk=disk
