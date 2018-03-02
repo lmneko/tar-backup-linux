@@ -44,11 +44,9 @@ function check_part {
 	if [ -z $sel_disk ];then         
         read -p "Please input the part of the system \"/\" part :" sel_disk     		
 		check_part
-	else  
-		if [ ! -b $sel_disk ];then
+	elif [ ! -b $sel_disk ];then
                  echo "The selected disk is invalid."
                  exit 1
-		fi
 	fi
 	return
 }
@@ -67,11 +65,9 @@ function chk_lvm {
 	if [ -z $boot_part ];then
 		read -p "Please input the boot part:" boot_part
 		chk_lvm
-	else
-		if [ ! -b $boot_part ];then
+	elif [ ! -b $boot_part ];then
 			echo "The boot part is not exist and exit..."
 			exit 1
-		fi
 	fi
 }
 
@@ -79,11 +75,9 @@ function check_bakdir {
 	if [ -z $dir_bak ];then         
         dir_bak=$run_dir
         check_bakdir  
-	else   
-		if [  ! -d $dir_bak ] ; then
+	elif [  ! -d $dir_bak ] ; then
                 echo "The selected directory is not exist."
                 exit 1
-        fi  
 	fi
 	dir_bak=${dir_bak%*/}
 }

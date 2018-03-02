@@ -44,11 +44,9 @@ function check_part {
 	if [ -z $sel_disk ];then
 		read -p "Select a empty disk to recovery. :" sel_disk
 		check_part
-	else 
-	    if [ ! -b $sel_disk ];then
+	elif [ ! -b $sel_disk ];then
 			echo "The selected disk is invalid." 
 			exit 1
-		fi
 	fi
 }
 
@@ -56,11 +54,9 @@ function chk_bakfile {
 	if [ -z ${backup_file} ];then
 		read -p "Select the *.tar.bz2 backup file to restore: " backup_file
 		chk_bakfile
-	else 
-	    if [ ! -f ${backup_file} ];then
+	elif [ ! -f ${backup_file} ];then
 			echo "backup file is not exist." 
 			exit 1
-		fi
 	fi
 }
 
@@ -197,7 +193,6 @@ function insgrub_genfstab {
 	boot_fstype=`blkid | grep ${sel_disk}1 | cut -d\" -f4`
 	export boot_uuid boot_fstype
 	if [[ $boot_lvmdisk == "lvm" ]];then
-		
 		root_uuid=`blkid | grep "/dev/mapper/centos-root" | cut -d\" -f2`
 		root_fstype=`blkid | grep "/dev/mapper/centos-root" | cut -d\" -f4`
 		swap_uuid=`blkid | grep "/dev/mapper/centos-swap" | cut -d\" -f2`
